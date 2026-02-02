@@ -4,13 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/index.js",
-    "start": "node src/index.js",
-    "migrate": "npx prisma migrate dev"
-    "migrate:deploy": "npx prisma migrate deploy",
-    "generate": "npx prisma generate",
-    "seed": "node prisma/seed.js"
+  "dev": "node --watch src/index.js",
+  "start": "node src/index.js",
+  "migrate": "npx prisma migrate dev",
+  "migrate:deploy": "npx prisma migrate deploy",
+  "generate": "npx prisma generate",
+  "seed": "node prisma/seed.js"
   },
+
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "cors": "^2.8.5",
