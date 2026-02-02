@@ -6,9 +6,9 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "migrate": "prisma migrate dev",
+    "migrate": "npx prisma migrate dev"
     "migrate:deploy": "npx prisma migrate deploy",
-"generate": "npx prisma generate",
+    "generate": "npx prisma generate",
     "seed": "node prisma/seed.js"
   },
   "dependencies": {
