@@ -4,12 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/index.js",
-    "start": "node src/index.js",
-    "migrate:deploy": "node ./node_modules/prisma/build/index.js migrate deploy",
-    "generate": "node ./node_modules/prisma/build/index.js generate",
-    "seed": "node prisma/seed.js"
-  },
+  "dev": "node --watch src/index.js",
+  "start": "node src/index.js",
+  "migrate:deploy": "node ./node_modules/prisma/build/index.js migrate deploy",
+  "generate": "node ./node_modules/prisma/build/index.js generate",
+  "seed": "node prisma/seed.js"
+},
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "prisma": "^5.18.0",
