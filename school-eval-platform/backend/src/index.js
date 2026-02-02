@@ -183,5 +183,5 @@ app.post("/api/users", async (req, res) => {
   res.json(user);
 });
 
-const port = Number(process.env.PORT || 5174);
+const port = Number(process.env.PORT || 3000);
 app.listen(port, () => console.log(`✅ API running on http://localhost:${port}`));
