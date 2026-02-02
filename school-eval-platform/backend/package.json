@@ -4,19 +4,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-  "dev": "node --watch src/index.js",
-  "start": "node src/index.js",
-  "migrate:deploy": "node ./node_modules/prisma/build/index.js migrate deploy",
-  "generate": "node ./node_modules/prisma/build/index.js generate",
-  "seed": "node prisma/seed.js"
-},
+    "start": "node src/index.js",
+    "migrate:deploy": "node ./node_modules/prisma/build/index.js migrate deploy",
+    "seed": "node prisma/seed.js",
+    "deploy": "npm run migrate:deploy && npm run seed && npm start"
+  },
   "dependencies": {
     "@prisma/client": "^5.22.0",
-    "prisma": "^5.18.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "googleapis": "^140.0.1",
     "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0"
   }
 }
+
