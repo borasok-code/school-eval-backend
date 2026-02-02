@@ -1,3 +1,8 @@
+const existing = await prisma.standard.findFirst();
+if (existing) {
+  console.log("✅ Seed already applied, skipping");
+  process.exit(0);
+};
 import fs from "fs";
 import path from "path";
 import { PrismaClient } from "@prisma/client";
