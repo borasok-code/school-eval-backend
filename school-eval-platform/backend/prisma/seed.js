@@ -23,7 +23,7 @@ function requirementsToItems(reqText) {
 }
 
 async function main() {
-  const seedPath = path.resolve(process.cwd(), "../school_standards_indicators.json");
+  const seedPath = path.resolve(process.cwd(), "..", "school_standards_indicators.json");
   if (!fs.existsSync(seedPath)) throw new Error(`Seed file not found: ${seedPath}`);
   const data = JSON.parse(fs.readFileSync(seedPath, "utf-8"));
 
