@@ -6,7 +6,7 @@ import path from "path";
 import fs from "fs";
 import multer from "multer";
 import { PrismaClient } from "@prisma/client";
-import { uploadToDrive } from "./drive.js";
+import { uploadToDrive, deleteFromDrive } from "./drive.js";
 
 console.log("=== SERVER STARTUP ===");
 
@@ -17,6 +17,51 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, "..", ".env") });
 
 const uploadsDir = path.resolve(__dirname, "..", "uploads");
+
+const hasDriveCredentials = () => (
+  Boolean(process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY)
+);
+
+const resolveLocalUploadPath = (evidence) => {
+  const source = evidence?.webViewLink || evidence?.path || "";
+  if (!source) return null;
+
+  const extractFromPathname = (pathname) => {
+    if (!pathname || !pathname.startsWith("/uploads/")) return null;
+    const filename = path.basename(pathname);
+    if (!filename) return null;
+    return path.join(uploadsDir, filename);
+  };
+
+  if (source.startsWith("http://") || source.startsWith("https://")) {
+    try {
+      const url = new URL(source);
+      return extractFromPathname(url.pathname);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  if (source.includes("/uploads/")) {
+    const [, tail] = source.split("/uploads/");
+    const filename = path.basename(tail || "");
+    if (!filename) return null;
+    return path.join(uploadsDir, filename);
+  }
+
+  return null;
+};
+
+const deleteLocalFileIfExists = async (filepath) => {
+  if (!filepath) return;
+  try {
+    await fs.promises.unlink(filepath);
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      throw err;
+    }
+  }
+};
 
 async function start() {
   try {
@@ -263,6 +308,46 @@ async function start() {
         res.json(evidence);
       } catch (err) {
         console.error("Failed to upload evidence:", err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    app.delete("/api/evidence/:id", async (req, res) => {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ error: "Invalid evidence id" });
+      }
+
+      try {
+        const evidence = await prisma.evidenceFile.findUnique({ where: { id } });
+        if (!evidence) {
+          return res.status(404).json({ error: "Evidence not found" });
+        }
+
+        if (evidence.driveFileId) {
+          if (!hasDriveCredentials()) {
+            return res.status(500).json({ error: "Drive credentials missing; cannot delete drive file." });
+          }
+          try {
+            await deleteFromDrive({ fileId: evidence.driveFileId });
+          } catch (err) {
+            console.error("Failed to delete Drive file:", err);
+            return res.status(500).json({ error: "Failed to delete Drive file." });
+          }
+        } else {
+          const localPath = resolveLocalUploadPath(evidence);
+          try {
+            await deleteLocalFileIfExists(localPath);
+          } catch (err) {
+            console.error("Failed to delete local file:", err);
+            return res.status(500).json({ error: "Failed to delete local file." });
+          }
+        }
+
+        await prisma.evidenceFile.delete({ where: { id } });
+        res.json({ ok: true });
+      } catch (err) {
+        console.error("Failed to delete evidence:", err);
         res.status(500).json({ error: err.message });
       }
     });

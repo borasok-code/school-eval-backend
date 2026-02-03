@@ -362,6 +362,7 @@ export default function App() {
 function IndicatorView({ api, indicator, onRefresh }) {
   const [saving, setSaving] = useState(false);
   const [uploadStates, setUploadStates] = useState({});
+  const [deleteStates, setDeleteStates] = useState({});
 
   const progress = useMemo(() => {
     const list = indicator.checklist ?? [];
@@ -372,10 +373,15 @@ function IndicatorView({ api, indicator, onRefresh }) {
 
   useEffect(() => {
     setUploadStates({});
+    setDeleteStates({});
   }, [indicator.id]);
 
   const setUploadState = (itemId, next) => {
     setUploadStates(prev => ({ ...prev, [itemId]: { ...(prev[itemId] || {}), ...next } }));
+  };
+
+  const setDeleteState = (evidenceId, next) => {
+    setDeleteStates(prev => ({ ...prev, [evidenceId]: { ...(prev[evidenceId] || {}), ...next } }));
   };
 
   async function setChecklistStatus(itemId, status) {
@@ -417,6 +423,29 @@ function IndicatorView({ api, indicator, onRefresh }) {
       await onRefresh();
     } catch (error) {
       setUploadState(itemId, { status: "error", message: error?.message || "Upload failed" });
+    }
+  }
+
+  async function deleteEvidence(evidenceId) {
+    if (!evidenceId) return;
+    const confirmed = window.confirm("Delete this uploaded file?");
+    if (!confirmed) return;
+
+    setDeleteState(evidenceId, { status: "deleting", message: "Deleting..." });
+    try {
+      const response = await fetch(`${api}/api/evidence/${evidenceId}`, {
+        method: "DELETE"
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error || "Delete failed");
+      }
+
+      setDeleteState(evidenceId, { status: "success", message: "Deleted" });
+      await onRefresh();
+    } catch (error) {
+      setDeleteState(evidenceId, { status: "error", message: error?.message || "Delete failed" });
     }
   }
 
@@ -472,15 +501,29 @@ function IndicatorView({ api, indicator, onRefresh }) {
               <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
                 {(item.evidence ?? []).length ? (
                   (item.evidence ?? []).map(e => (
-                    <a
-                      key={e.id}
-                      href={e.webViewLink || e.path}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ fontSize: 12, color: "#1a73e8", textDecoration: "none" }}
-                    >
-                      {e.filename || "Evidence link"}
-                    </a>
+                    <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <a
+                        href={e.webViewLink || e.path}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ fontSize: 12, color: "#1a73e8", textDecoration: "none" }}
+                      >
+                        {e.filename || "Evidence link"}
+                      </a>
+                      <button
+                        onClick={() => deleteEvidence(e.id)}
+                        style={{ ...btnStyle, padding: "4px 8px" }}
+                        disabled={deleteStates[e.id]?.status === "deleting"}
+                      >
+                        Delete
+                      </button>
+                      {deleteStates[e.id]?.status === "deleting" ? <Badge>Deleting...</Badge> : null}
+                      {deleteStates[e.id]?.status === "error" ? (
+                        <span style={{ fontSize: 12, color: "#b00020" }}>
+                          {deleteStates[e.id]?.message || "Delete failed"}
+                        </span>
+                      ) : null}
+                    </div>
                   ))
                 ) : (
                   <span style={{ fontSize: 12, color: "#666" }}>No evidence uploaded yet.</span>

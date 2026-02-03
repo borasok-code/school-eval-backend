@@ -80,3 +80,18 @@ export const uploadToDrive = async ({
 
   return { id: file.id, webViewLink: file.webViewLink || "" };
 };
+
+export const deleteFromDrive = async ({ fileId }) => {
+  if (!fileId) {
+    throw new Error("Missing fileId for delete.");
+  }
+
+  const drive = getDriveClient();
+
+  await drive.files.delete({
+    fileId,
+    supportsAllDrives: true
+  });
+
+  return { ok: true };
+};
