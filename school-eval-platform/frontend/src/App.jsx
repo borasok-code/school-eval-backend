@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const DRIVE_FOLDER_URL = import.meta.env.VITE_DRIVE_FOLDER_URL || "";
 
 console.log("Using API base URL:", API);
 
@@ -342,6 +343,7 @@ export default function App() {
                 ) : (
                   <IndicatorView
                     api={API}
+                    driveFolderUrl={DRIVE_FOLDER_URL}
                     indicator={indicatorDetail}
                     onRefresh={async () => {
                       await refreshIndicatorDetail(indicatorDetail.id);
@@ -359,10 +361,11 @@ export default function App() {
   );
 }
 
-function IndicatorView({ api, indicator, onRefresh }) {
+function IndicatorView({ api, driveFolderUrl, indicator, onRefresh }) {
   const [saving, setSaving] = useState(false);
-  const [uploadStates, setUploadStates] = useState({});
   const [deleteStates, setDeleteStates] = useState({});
+  const [linkStates, setLinkStates] = useState({});
+  const [linkInputs, setLinkInputs] = useState({});
 
   const progress = useMemo(() => {
     const list = indicator.checklist ?? [];
@@ -372,16 +375,21 @@ function IndicatorView({ api, indicator, onRefresh }) {
   }, [indicator]);
 
   useEffect(() => {
-    setUploadStates({});
     setDeleteStates({});
+    setLinkStates({});
+    setLinkInputs({});
   }, [indicator.id]);
-
-  const setUploadState = (itemId, next) => {
-    setUploadStates(prev => ({ ...prev, [itemId]: { ...(prev[itemId] || {}), ...next } }));
-  };
 
   const setDeleteState = (evidenceId, next) => {
     setDeleteStates(prev => ({ ...prev, [evidenceId]: { ...(prev[evidenceId] || {}), ...next } }));
+  };
+
+  const setLinkState = (itemId, next) => {
+    setLinkStates(prev => ({ ...prev, [itemId]: { ...(prev[itemId] || {}), ...next } }));
+  };
+
+  const setLinkInput = (itemId, next) => {
+    setLinkInputs(prev => ({ ...prev, [itemId]: { ...(prev[itemId] || {}), ...next } }));
   };
 
   async function setChecklistStatus(itemId, status) {
@@ -402,27 +410,36 @@ function IndicatorView({ api, indicator, onRefresh }) {
     onRefresh();
   }
 
-  async function uploadEvidence(itemId, file) {
-    if (!file) return;
-    setUploadState(itemId, { status: "uploading", message: "Uploading…" });
+  async function addEvidenceLink(itemId) {
+    const url = String(linkInputs[itemId]?.url || "").trim();
+    const filename = String(linkInputs[itemId]?.name || "").trim();
+    if (!url) {
+      setLinkState(itemId, { status: "error", message: "Drive link required" });
+      return;
+    }
+
+    setLinkState(itemId, { status: "saving", message: "Saving..." });
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("uploadedBy", "Teacher");
-      const response = await fetch(`${api}/api/checklist-items/${itemId}/evidence`, {
+      const response = await fetch(`${api}/api/checklist-items/${itemId}/evidence-link`, {
         method: "POST",
-        body: formData
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url,
+          filename: filename || undefined,
+          uploadedBy: "Teacher"
+        })
       });
 
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
-        throw new Error(payload?.error || "Upload failed");
+        throw new Error(payload?.error || "Save failed");
       }
 
-      setUploadState(itemId, { status: "success", message: "Upload complete" });
+      setLinkState(itemId, { status: "success", message: "Link saved" });
+      setLinkInput(itemId, { url: "", name: "" });
       await onRefresh();
     } catch (error) {
-      setUploadState(itemId, { status: "error", message: error?.message || "Upload failed" });
+      setLinkState(itemId, { status: "error", message: error?.message || "Save failed" });
     }
   }
 
@@ -474,29 +491,58 @@ function IndicatorView({ api, indicator, onRefresh }) {
                 <button onClick={() => setChecklistStatus(item.id, "COMPLETED")} style={btnStyle}>Completed</button>
                 <StatusPill status={item.status} />
               </div>
-              <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <label style={{ ...btnStyle, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  Upload evidence
-                  <input
-                    type="file"
-                    style={{ display: "none" }}
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      if (file) {
-                        uploadEvidence(item.id, file);
-                        event.target.value = "";
+              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => {
+                      if (driveFolderUrl) {
+                        window.open(driveFolderUrl, "_blank", "noopener,noreferrer");
                       }
                     }}
+                    style={btnStyle}
+                    disabled={!driveFolderUrl}
+                    title={driveFolderUrl ? "Open Drive folder" : "Set VITE_DRIVE_FOLDER_URL to enable"}
+                  >
+                    Upload via Drive
+                  </button>
+                  {!driveFolderUrl ? (
+                    <span style={{ fontSize: 12, color: "#b00020" }}>
+                      Drive folder URL not set.
+                    </span>
+                  ) : null}
+                </div>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <input
+                    type="text"
+                    placeholder="Paste Drive file link"
+                    value={linkInputs[item.id]?.url || ""}
+                    onChange={(event) => setLinkInput(item.id, { url: event.target.value })}
+                    style={evidenceInputStyle}
                   />
-                </label>
-                {uploadStates[item.id]?.status === "uploading" ? <Badge>Uploading…</Badge> : null}
-                {uploadStates[item.id]?.status === "success" ? <Badge>Uploaded</Badge> : null}
-                {uploadStates[item.id]?.status === "error" ? <Badge>Upload failed</Badge> : null}
-                {uploadStates[item.id]?.message && uploadStates[item.id]?.status !== "uploading" ? (
-                  <span style={{ fontSize: 12, color: uploadStates[item.id]?.status === "error" ? "#b00020" : "#2e7d32" }}>
-                    {uploadStates[item.id]?.message}
-                  </span>
-                ) : null}
+                  <input
+                    type="text"
+                    placeholder="Display name (optional)"
+                    value={linkInputs[item.id]?.name || ""}
+                    onChange={(event) => setLinkInput(item.id, { name: event.target.value })}
+                    style={evidenceInputStyle}
+                  />
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      onClick={() => addEvidenceLink(item.id)}
+                      style={btnStyle}
+                      disabled={linkStates[item.id]?.status === "saving"}
+                    >
+                      Save link
+                    </button>
+                    {linkStates[item.id]?.status === "saving" ? <Badge>Saving...</Badge> : null}
+                    {linkStates[item.id]?.status === "success" ? <Badge>Saved</Badge> : null}
+                    {linkStates[item.id]?.status === "error" ? (
+                      <span style={{ fontSize: 12, color: "#b00020" }}>
+                        {linkStates[item.id]?.message || "Save failed"}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
               </div>
               <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
                 {(item.evidence ?? []).length ? (
@@ -547,4 +593,12 @@ const btnStyle = {
   background: "white",
   cursor: "pointer",
   fontSize: 12
+};
+
+const evidenceInputStyle = {
+  padding: "6px 8px",
+  borderRadius: 10,
+  border: "1px solid #ddd",
+  fontSize: 12,
+  width: "100%"
 };

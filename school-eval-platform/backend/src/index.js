@@ -312,6 +312,53 @@ async function start() {
       }
     });
 
+    app.post("/api/checklist-items/:id/evidence-link", async (req, res) => {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ error: "Invalid checklist item id" });
+      }
+
+      const url = String(req.body?.url || "").trim();
+      if (!url) {
+        return res.status(400).json({ error: "url required" });
+      }
+
+      let filename = String(req.body?.filename || "").trim();
+      if (!filename) {
+        try {
+          const parsed = new URL(url);
+          filename = path.basename(parsed.pathname) || "Evidence link";
+        } catch {
+          filename = "Evidence link";
+        }
+      }
+
+      try {
+        const checklistItem = await prisma.checklistItem.findUnique({
+          where: { id },
+          select: { id: true, indicatorId: true }
+        });
+        if (!checklistItem) return res.status(404).json({ error: "Checklist item not found" });
+
+        const evidence = await prisma.evidenceFile.create({
+          data: {
+            checklistItemId: checklistItem.id,
+            indicatorId: checklistItem.indicatorId,
+            filename,
+            path: url,
+            driveFileId: null,
+            webViewLink: url,
+            uploadedBy: req.body?.uploadedBy ?? null
+          }
+        });
+
+        res.json(evidence);
+      } catch (err) {
+        console.error("Failed to add evidence link:", err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     app.delete("/api/evidence/:id", async (req, res) => {
       const id = Number(req.params.id);
       if (!Number.isFinite(id)) {
