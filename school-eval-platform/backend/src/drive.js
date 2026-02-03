@@ -27,7 +27,14 @@ const getDriveClient = () => {
   return google.drive({ version: "v3", auth });
 };
 
-export const uploadToDrive = async ({ buffer, mimeType, filename, folderId }) => {
+export const uploadToDrive = async ({
+  buffer,
+  mimeType,
+  filename,
+  folderId,
+  makePublic = false,
+  shareWithEmail = ""
+}) => {
   if (!buffer || !filename) {
     throw new Error("Missing buffer or filename for upload.");
   }
@@ -46,12 +53,29 @@ export const uploadToDrive = async ({ buffer, mimeType, filename, folderId }) =>
       mimeType: safeMimeType,
       body: Readable.from(buffer)
     },
-    fields: "id, webViewLink"
+    fields: "id, webViewLink",
+    supportsAllDrives: true
   });
 
   const file = response?.data;
   if (!file?.id) {
     throw new Error("Drive upload failed to return a file id.");
+  }
+
+  // Optionally share the file so the link is accessible.
+  if (shareWithEmail) {
+    await drive.permissions.create({
+      fileId: file.id,
+      requestBody: { type: "user", role: "reader", emailAddress: shareWithEmail },
+      supportsAllDrives: true
+    });
+  }
+  if (makePublic) {
+    await drive.permissions.create({
+      fileId: file.id,
+      requestBody: { type: "anyone", role: "reader" },
+      supportsAllDrives: true
+    });
   }
 
   return { id: file.id, webViewLink: file.webViewLink || "" };

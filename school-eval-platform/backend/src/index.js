@@ -223,21 +223,29 @@ async function start() {
             driveResult = await uploadToDrive({
               buffer: req.file.buffer,
               mimeType: req.file.mimetype,
-              filename: req.file.originalname
+              filename: req.file.originalname,
+              makePublic: String(process.env.DRIVE_PUBLIC || "").toLowerCase() === "true",
+              shareWithEmail: process.env.DRIVE_SHARE_EMAIL || ""
             });
           } catch (err) {
             console.error("Drive upload failed, saving locally:", err.message);
           }
+        } else {
+          console.log("Drive creds missing, saving file locally.");
         }
 
         let pathValue = "";
+        let publicLink = "";
         if (driveResult?.webViewLink) {
           pathValue = driveResult.webViewLink;
+          publicLink = driveResult.webViewLink;
         } else {
           fs.mkdirSync(uploadsDir, { recursive: true });
           const safeName = `${Date.now()}-${req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
           fs.writeFileSync(path.join(uploadsDir, safeName), req.file.buffer);
-          pathValue = `/uploads/${safeName}`;
+          const baseUrl = `${req.protocol}://${req.get("host")}`;
+          publicLink = `${baseUrl}/uploads/${safeName}`;
+          pathValue = publicLink;
         }
 
         const evidence = await prisma.evidenceFile.create({
@@ -247,7 +255,7 @@ async function start() {
             filename: req.file.originalname,
             path: pathValue,
             driveFileId: driveResult?.id ?? null,
-            webViewLink: driveResult?.webViewLink ?? null,
+            webViewLink: publicLink || driveResult?.webViewLink || null,
             uploadedBy: req.body?.uploadedBy ?? null
           }
         });
