@@ -1,187 +1,325 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { PrismaClient } from "@prisma/client";
+import { fileURLToPath } from "url";
+import path from "path";
+import fs from "fs";
 import multer from "multer";
+import { PrismaClient } from "@prisma/client";
 import { uploadToDrive } from "./drive.js";
 
-dotenv.config();
-const app = express();
-const prisma = new PrismaClient();
-const upload = multer({ storage: multer.memoryStorage() });
+console.log("=== SERVER STARTUP ===");
 
-app.use(express.json({ limit: "10mb" }));
-const corsOrigin = process.env.CORS_ORIGIN
-  ? process.env.CORS_ORIGIN.split(",").map(origin => origin.trim()).filter(Boolean)
-  : "*";
-app.use(cors({ origin: corsOrigin }));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-app.get("/api/health", async (req, res) => {
+// Load backend/.env reliably no matter where node is launched from.
+dotenv.config({ path: path.resolve(__dirname, "..", ".env") });
+
+const uploadsDir = path.resolve(__dirname, "..", "uploads");
+
+async function start() {
   try {
-    await prisma.$queryRaw`SELECT 1`;
-    res.json({ ok: true, db: "ok" });
-  } catch (error) {
-    console.error("Health check failed:", error);
-    res.status(503).json({ ok: false, db: "fail" });
-  }
-});
+    console.log("Creating Express app...");
+    const app = express();
+    console.log("Creating Prisma client...");
+    const prisma = new PrismaClient({ errorFormat: 'pretty' });
+    const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+    console.log("Setting up middleware...");
 
-app.get("/api/standards", async (req, res) => {
-  const standards = await prisma.standard.findMany({
-    orderBy: { standardNo: "asc" },
-    include: { indicators: { select: { id: true, status: true, progress: true } } }
-  });
+    app.use(express.json({ limit: "10mb" }));
+    app.use(cors({ origin: "*" }));
+    app.use("/uploads", express.static(uploadsDir));
+    console.log("Middleware configured");
 
-  const withStats = standards.map(s => {
-    const total = s.indicators.length;
-    const completed = s.indicators.filter(i => i.status === "COMPLETED").length;
-    const avgProgress = total ? Math.round(s.indicators.reduce((a,b)=>a+(b.progress||0),0)/total) : 0;
-    return { ...s, stats: { total, completed, avgProgress } };
-  });
-
-  res.json(withStats);
-});
-
-app.get("/api/standards/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  const standard = await prisma.standard.findUnique({
-    where: { id },
-    include: {
-      owner: true,
-      indicators: { orderBy: [{ code: "asc" }, { id: "asc" }], include: { manager: true } }
-    }
-  });
-  if (!standard) return res.status(404).json({ error: "Not found" });
-  res.json(standard);
-});
-
-app.patch("/api/standards/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  const { ownerId, title } = req.body ?? {};
-  const updated = await prisma.standard.update({
-    where: { id },
-    data: {
-      ...(title ? { title: String(title) } : {}),
-      ...(ownerId !== undefined ? { ownerId: ownerId ? Number(ownerId) : null } : {})
-    }
-  });
-  res.json(updated);
-});
-
-app.get("/api/indicators", async (req, res) => {
-  const standardId = req.query.standardId ? Number(req.query.standardId) : undefined;
-  const where = standardId ? { standardId } : {};
-  const indicators = await prisma.indicator.findMany({
-    where,
-    orderBy: [{ code: "asc" }, { id: "asc" }],
-    include: { manager: true, standard: { select: { standardNo: true, title: true } } }
-  });
-  res.json(indicators);
-});
-
-app.get("/api/indicators/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  const indicator = await prisma.indicator.findUnique({
-    where: { id },
-    include: {
-      manager: true,
-      standard: true,
-      checklist: { orderBy: { id: "asc" }, include: { assignee: true, evidence: true, comments: true } }
-    }
-  });
-  if (!indicator) return res.status(404).json({ error: "Not found" });
-  res.json(indicator);
-});
-
-app.patch("/api/indicators/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  const { status, progress, managerId, name } = req.body ?? {};
-  const updated = await prisma.indicator.update({
-    where: { id },
-    data: {
-      ...(status ? { status } : {}),
-      ...(progress !== undefined ? { progress: Number(progress) } : {}),
-      ...(managerId !== undefined ? { managerId: managerId ? Number(managerId) : null } : {}),
-      ...(name ? { name: String(name) } : {})
-    }
-  });
-  res.json(updated);
-});
-
-app.patch("/api/checklist-items/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  const { status, assigneeId, text } = req.body ?? {};
-  const updated = await prisma.checklistItem.update({
-    where: { id },
-    data: {
-      ...(status ? { status } : {}),
-      ...(assigneeId !== undefined ? { assigneeId: assigneeId ? Number(assigneeId) : null } : {}),
-      ...(text ? { text: String(text) } : {})
-    }
-  });
-  res.json(updated);
-});
-
-app.post("/api/checklist-items/:id/comments", async (req, res) => {
-  const checklistItemId = Number(req.params.id);
-  const { authorName, text } = req.body ?? {};
-  if (!text) return res.status(400).json({ error: "text is required" });
-  const comment = await prisma.comment.create({
-    data: { checklistItemId, authorName: authorName ? String(authorName) : "Teacher", text: String(text) }
-  });
-  res.json(comment);
-});
-
-app.post("/api/checklist-items/:id/evidence", upload.single("file"), async (req, res) => {
-  const checklistItemId = Number(req.params.id);
-  const { uploadedBy } = req.body ?? {};
-  const file = req.file;
-
-  if (!file) {
-    return res.status(400).json({ error: "file is required" });
-  }
-  const missingEnv = ["GOOGLE_CLIENT_EMAIL", "GOOGLE_PRIVATE_KEY"].filter((key) => !process.env[key]);
-  if (missingEnv.length) {
-    return res.status(500).json({ error: `Missing required env vars: ${missingEnv.join(", ")}` });
-  }
-
-  try {
-    const driveFile = await uploadToDrive({
-      buffer: file.buffer,
-      mimeType: file.mimetype,
-      filename: file.originalname,
-      folderId: process.env.DRIVE_FOLDER_ID
+    // Routes
+    app.get("/", (req, res) => {
+      res.json({ status: "ok" });
     });
 
-    const savedEvidence = await prisma.evidenceFile.create({
-      data: {
-        checklistItemId,
-        filename: file.originalname,
-        path: driveFile.webViewLink,
-        driveFileId: driveFile.id,
-        webViewLink: driveFile.webViewLink,
-        uploadedBy: uploadedBy ? String(uploadedBy) : "Teacher"
+    app.get("/api/health", async (req, res) => {
+      try {
+        await prisma.$queryRaw`SELECT 1`;
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(500).json({ ok: false, error: err.message });
       }
     });
 
-    res.json({ savedEvidence, driveFile });
-  } catch (error) {
-    console.error("Evidence upload failed:", error);
-    res.status(502).json({ error: "Failed to upload evidence", details: error?.message || "Drive upload error" });
+    app.get("/api/standards", async (req, res) => {
+      const startedAt = Date.now();
+      console.log("[GET] /api/standards");
+      try {
+        const standards = await prisma.standard.findMany({
+          orderBy: { standardNo: "asc" },
+          include: { indicators: { select: { id: true, status: true, progress: true } } }
+        });
+
+        const withStats = standards.map(s => {
+          const total = s.indicators.length;
+          const completed = s.indicators.filter(i => i.status === "COMPLETED").length;
+          const avgProgress = total ? Math.round(s.indicators.reduce((a,b)=>a+(b.progress||0),0)/total) : 0;
+          return { ...s, stats: { total, completed, avgProgress } };
+        });
+
+        console.log(`Returning ${withStats.length} standards in ${Date.now() - startedAt}ms`);
+        res.json(withStats);
+      } catch (err) {
+        console.error("Failed to fetch standards:", err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    app.get("/api/standards/:id", async (req, res) => {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ error: "Invalid standard id" });
+      }
+      console.log(`[GET] /api/standards/${id}`);
+      try {
+        const standard = await prisma.standard.findUnique({
+          where: { id },
+          include: {
+            indicators: {
+              orderBy: { code: "asc" },
+              select: { id: true, code: true, name: true, status: true, progress: true, managerId: true }
+            }
+          }
+        });
+        if (!standard) return res.status(404).json({ error: "Standard not found" });
+        res.json(standard);
+      } catch (err) {
+        console.error("Failed to fetch standard detail:", err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    app.patch("/api/standards/:id", async (req, res) => {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ error: "Invalid standard id" });
+      }
+      const ownerIdRaw = req.body?.ownerId;
+      const data = {};
+      if (ownerIdRaw === null || ownerIdRaw === undefined || ownerIdRaw === "") {
+        data.ownerId = null;
+      } else {
+        const ownerId = Number(ownerIdRaw);
+        if (!Number.isFinite(ownerId)) {
+          return res.status(400).json({ error: "Invalid ownerId" });
+        }
+        data.ownerId = ownerId;
+      }
+      try {
+        const updated = await prisma.standard.update({ where: { id }, data });
+        res.json(updated);
+      } catch (err) {
+        console.error("Failed to update standard:", err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    app.get("/api/indicators/:id", async (req, res) => {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ error: "Invalid indicator id" });
+      }
+      console.log(`[GET] /api/indicators/${id}`);
+      try {
+        const indicator = await prisma.indicator.findUnique({
+          where: { id },
+          include: {
+            checklist: {
+              orderBy: { id: "asc" },
+              include: { evidence: true }
+            }
+          }
+        });
+        if (!indicator) return res.status(404).json({ error: "Indicator not found" });
+        res.json(indicator);
+      } catch (err) {
+        console.error("Failed to fetch indicator detail:", err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    app.patch("/api/indicators/:id", async (req, res) => {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ error: "Invalid indicator id" });
+      }
+      const data = {};
+      if (req.body?.managerId !== undefined) {
+        if (req.body.managerId === null || req.body.managerId === "") {
+          data.managerId = null;
+        } else {
+          const managerId = Number(req.body.managerId);
+          if (!Number.isFinite(managerId)) {
+            return res.status(400).json({ error: "Invalid managerId" });
+          }
+          data.managerId = managerId;
+        }
+      }
+      if (req.body?.progress !== undefined) {
+        const progress = Number(req.body.progress);
+        if (!Number.isFinite(progress)) {
+          return res.status(400).json({ error: "Invalid progress" });
+        }
+        data.progress = Math.max(0, Math.min(100, Math.round(progress)));
+      }
+      if (req.body?.status !== undefined) {
+        data.status = req.body.status;
+      }
+      if (!Object.keys(data).length) {
+        return res.status(400).json({ error: "No fields to update" });
+      }
+      try {
+        const updated = await prisma.indicator.update({ where: { id }, data });
+        res.json(updated);
+      } catch (err) {
+        console.error("Failed to update indicator:", err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    app.patch("/api/checklist-items/:id", async (req, res) => {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ error: "Invalid checklist item id" });
+      }
+      if (!req.body?.status) {
+        return res.status(400).json({ error: "status required" });
+      }
+      try {
+        const updated = await prisma.checklistItem.update({
+          where: { id },
+          data: { status: req.body.status }
+        });
+        res.json(updated);
+      } catch (err) {
+        console.error("Failed to update checklist item:", err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    app.post("/api/checklist-items/:id/evidence", upload.single("file"), async (req, res) => {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ error: "Invalid checklist item id" });
+      }
+      if (!req.file) {
+        return res.status(400).json({ error: "file required" });
+      }
+      try {
+        const checklistItem = await prisma.checklistItem.findUnique({
+          where: { id },
+          select: { id: true, indicatorId: true }
+        });
+        if (!checklistItem) return res.status(404).json({ error: "Checklist item not found" });
+
+        let driveResult = null;
+        if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
+          try {
+            driveResult = await uploadToDrive({
+              buffer: req.file.buffer,
+              mimeType: req.file.mimetype,
+              filename: req.file.originalname
+            });
+          } catch (err) {
+            console.error("Drive upload failed, saving locally:", err.message);
+          }
+        }
+
+        let pathValue = "";
+        if (driveResult?.webViewLink) {
+          pathValue = driveResult.webViewLink;
+        } else {
+          fs.mkdirSync(uploadsDir, { recursive: true });
+          const safeName = `${Date.now()}-${req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+          fs.writeFileSync(path.join(uploadsDir, safeName), req.file.buffer);
+          pathValue = `/uploads/${safeName}`;
+        }
+
+        const evidence = await prisma.evidenceFile.create({
+          data: {
+            checklistItemId: checklistItem.id,
+            indicatorId: checklistItem.indicatorId,
+            filename: req.file.originalname,
+            path: pathValue,
+            driveFileId: driveResult?.id ?? null,
+            webViewLink: driveResult?.webViewLink ?? null,
+            uploadedBy: req.body?.uploadedBy ?? null
+          }
+        });
+
+        res.json(evidence);
+      } catch (err) {
+        console.error("Failed to upload evidence:", err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    app.get("/api/users", async (req, res) => {
+      try {
+        const users = await prisma.user.findMany({ orderBy: { id: "asc" }});
+        res.json(users);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    app.post("/api/users", async (req, res) => {
+      try {
+        const { name, role } = req.body;
+        if (!name) return res.status(400).json({ error: "name required" });
+        const user = await prisma.user.create({ data: { name, role: role || "TEACHER" }});
+        res.json(user);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // Error handler
+    app.use((err, req, res, next) => {
+      console.error("ERROR:", err);
+      res.status(500).json({ error: err.message });
+    });
+
+    const port = process.env.PORT || 3000;
+    console.log(`About to call app.listen on port ${port}`);
+    
+    const server = app.listen(port, () => {
+      console.log(`✅ Listening on port ${port}`);
+      console.log(`Server started at: ${new Date().toISOString()}`);
+      console.log(`Process ID: ${process.pid}`);
+    });
+    
+    server.on('error', (err) => {
+      console.error('SERVER ERROR on listen:', err.message);
+      if (err.code === 'EADDRINUSE') {
+        console.error(`Port ${port} is already in use`);
+      }
+      process.exit(1);
+    });
+    
+    server.on('clientError', (err) => {
+      console.error('CLIENT ERROR:', err.message);
+    });
+    
+    process.on('uncaughtException', (err) => {
+      console.error('UNCAUGHT EXCEPTION:', err);
+      process.exit(1);
+    });
+    
+    process.on('unhandledRejection', (reason, promise) => {
+      console.error('UNHANDLED REJECTION at:', promise, 'reason:', reason);
+      process.exit(1);
+    });
+
+  } catch (err) {
+    console.error('STARTUP ERROR:', err);
+    process.exit(1);
   }
-});
+}
 
-app.get("/api/users", async (req, res) => {
-  const users = await prisma.user.findMany({ orderBy: { id: "asc" }});
-  res.json(users);
-});
-
-app.post("/api/users", async (req, res) => {
-  const { name, role } = req.body ?? {};
-  if (!name) return res.status(400).json({ error: "name is required" });
-  const user = await prisma.user.create({ data: { name: String(name), role: role || "TEACHER" }});
-  res.json(user);
-});
-
-const port = Number(process.env.PORT || 3000);
-app.listen(port, () => console.log(`✅ API running on http://localhost:${port}`));
+start();

@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:5174";
+const API = import.meta.env.VITE_API_URL || "http://localhost:3000";
+
+console.log("Using API base URL:", API);
 
 const STATUS_TONES = {
   NOT_STARTED: { bg: "#f1f3f5", border: "#ced4da", text: "#495057" },
@@ -75,8 +77,24 @@ export default function App() {
   const [savingTeacher, setSavingTeacher] = useState(false);
 
   useEffect(() => {
-    fetch(`${API}/api/standards`).then(r => r.json()).then(setStandards);
-    fetch(`${API}/api/users`).then(r => r.json()).then(setUsers);
+    console.log("Fetching standards from", API + "/api/standards");
+    fetch(`${API}/api/standards`)
+      .then(async (r) => {
+        console.log("/api/standards status", r.status);
+        if (!r.ok) {
+          const errorBody = await r.text().catch(() => "");
+          console.error("/api/standards error body", errorBody);
+          throw new Error(`Standards request failed: ${r.status}`);
+        }
+        return r.json();
+      })
+      .then(data => { console.log("standards payload length", (data || []).length); setStandards(data); })
+      .catch(err => { console.error("Failed to fetch standards:", err); });
+
+    fetch(`${API}/api/users`)
+      .then(r => r.json())
+      .then(setUsers)
+      .catch(err => { console.error("Failed to fetch users:", err); });
   }, []);
 
   useEffect(() => {
